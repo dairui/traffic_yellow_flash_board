@@ -107,13 +107,13 @@ void UsageFault_Handler(void)
   {
   }
 }
-extern OS_TID tid_power_detect;
-void DMA1_Channel1_IRQHandler(void)	   
-{  
+//extern OS_TID tid_power_detect;
+void DMA1_Channel1_IRQHandler(void)
+{
   if(DMA_GetITStatus(DMA1_IT_TC1))
   {
     DMA_ClearITPendingBit(DMA1_IT_GL1);
-    isr_evt_set(EVT_ADC_DONE, tid_power_detect);
+    //isr_evt_set(EVT_ADC_DONE, tid_power_detect);
   }
 }
 extern unsigned int AC_count;
