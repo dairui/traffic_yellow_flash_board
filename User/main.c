@@ -30,9 +30,14 @@ __task void task_yellow_flash(void);
 
 u16 Channels_enabled = 0xffff;
 u16 Fault_recovery_test =0;
-u8 Work_normal = 0;
 __IO uint16_t  ADC_buffer[ADC_CHANNEL];
 u8 Yellow_Flash = 1;
+u8 TT_cont1 = 0;
+u8 TT_cont2 = 0;
+u8 TT_cont3 = 0;
+u8 TT_cont4 = 0;
+	U16 Yellow_count	= 0;
+	u8 TT1_A6_0C ;
 
 extern void DMAReConfig(void);
 
@@ -41,6 +46,7 @@ int main (void)
 {
 	os_sys_init(init);
 	Fault_recovery_test_High();			//High =允许12V供电输出
+
 }
 
 __task void init (void) 
@@ -103,16 +109,19 @@ __task void task_recv_CAN(void)
 				heart_to_dog = (heart_to_dog | (1<< 0));
 				// The bitmap of available vehicle channels
 				Channels_enabled = ((RxMessage.data[4]<<8)|RxMessage.data[3]);
+				TT_cont1++;
 			}
 			else if(RxMessage.data[0] == IPI && RxMessage.data[1] == 0x83 && RxMessage.data[4] == 0x02)
 			{//相位板心跳	RxMessage.data[3]为相位板ID
 				if(RxMessage.data[5]==0)
-					heart_to_dog = (heart_to_dog | (1<<RxMessage.data[3]));				
+					heart_to_dog = (heart_to_dog | (1<<RxMessage.data[3]));
+					TT_cont2++;
 			}
-			else if (RxMessage.data[0] == IPI && RxMessage.data[1] == 0xE1 && RxMessage.data[5] & 0x40)
+			else if (RxMessage.data[0] == IPI && RxMessage.data[1] == 0xE1 && (RxMessage.data[5] && 0x40==0x40))
 			{
+				tsk_lock ();
 				msg_error = _calloc_box (mpool);
-				msg_error->id = 1;
+				msg_error->id = CAN_ID_NO;
 				msg_error->data[0] = IPI;
 				msg_error->data[1] = 0xA6;
 				msg_error->data[3] = RxMessage.data[3];
@@ -121,16 +130,18 @@ __task void task_recv_CAN(void)
 				msg_error->len = sizeof(msg_error->data);
 				msg_error->ch = 2;
 				msg_error->format = STANDARD_FORMAT;
-				msg_error->type = DATA_FRAME;		
+				msg_error->type = DATA_FRAME;
+				tsk_unlock ();
 				os_mbx_send (CAN_send_mailbox, msg_error, 0xffff);
 
 				Yellow_Flash = 1;
-				Work_normal = 0;
+				heart_to_dog = 0;
 			}
-			else if (RxMessage.data[0] == IPI && RxMessage.data[1] == 0xE3 && RxMessage.data[5] & 0x40)
+			else if (RxMessage.data[0] == IPI && RxMessage.data[1] == 0xE3 && (RxMessage.data[5] && 0x40==0x40))
 			{
+				tsk_lock ();
 				msg_error = _calloc_box (mpool);
-				msg_error->id = 1;
+				msg_error->id = CAN_ID_NO;
 				msg_error->data[0] = IPI;
 				msg_error->data[1] = 0xA6;
 				msg_error->data[3] = RxMessage.data[3];
@@ -139,11 +150,11 @@ __task void task_recv_CAN(void)
 				msg_error->len = sizeof(msg_error->data);
 				msg_error->ch = 2;
 				msg_error->format = STANDARD_FORMAT;
-				msg_error->type = DATA_FRAME;		
+				msg_error->type = DATA_FRAME;
+				tsk_unlock ();
 				os_mbx_send (CAN_send_mailbox, msg_error, 0xffff);
-
 				Yellow_Flash = 1;
-				Work_normal = 0;
+				heart_to_dog = 0;
 			}
 		}
 	}
@@ -160,43 +171,70 @@ void GPIO_PinReverse(GPIO_TypeDef* GPIOx, uint16_t GPIO_Pin)
     GPIOx->ODR ^= GPIO_Pin;
 }
 
+
 __task void task_green_led_flash(void)
 {
-	u16 count = 0;
-	
-	os_itv_set (10);  //100ms
+	CAN_msg *msg_error;
+//	U16 Yellow_count	= 0;
+//	u8 TT1_A6_0C ;
+	os_itv_set (50);  //500ms
 	while (1)
 	{
 		os_itv_wait ();
-		count++;
-		if ((count%5)==0) Flashing_pulse_1s = ~Flashing_pulse_1s;
-		if(count > 6000 ) count = 0;
-		if(Work_normal==1)
+		if(Yellow_Flash==0)
 		{
-			Fault_recovery_test_High();
-			normal_flicker(Flashing_pulse_1s);                    //led1正常闪烁
-			Fault_recovery_test=0;
-		}			
+			GPIO_PinReverse(GPIOD, GPIO_Pin_2);  //正常LED闪烁
+			GPIO_PinReverse(GPIOB, GPIO_Pin_12);  //给黄闪看门狗喂狗
+			Alarm_Off();                          //关闭蜂鸣器
+			Fault_recovery_test_High();          //供电输出打开
+			Yellow_count=0;          //故障复位计数器清0
+
+			if (TT1_A6_0C ==0)
+			{
+				tsk_lock ();  			//  disables task switching
+				msg_error = _calloc_box (mpool);
+				msg_error->id = CAN_ID_NO;
+				msg_error->data[0] = IPI;
+				msg_error->data[1] = 0xA6;
+				msg_error->data[3] = 0x00;
+				msg_error->data[6] = 0x0C;
+				msg_error->data[7] = MSG_END;
+				msg_error->len = sizeof(msg_error->data);
+				msg_error->ch = 2;
+				msg_error->format = STANDARD_FORMAT;
+				msg_error->type = DATA_FRAME;
+				tsk_unlock (); 			//  enable  task switching
+				os_mbx_send (CAN_send_mailbox, msg_error, 0xffff);
+				TT1_A6_0C=1 ;
+			}
+		}
 		else
 		{
-			if(count > 500)    //短暂断电后再供电，主控板相位板重新上电测试故障
-				{                  //100*500=5分钟，上电测试
-					Fault_recovery_test_High();
-					Fault_recovery_test=0;
-				}
-				
-			else if(count < 400)  
-				GPIO_PinReverse(GPIOD, GPIO_Pin_7);   //切断12V输出电源
-			yellow_flicker(Flashing_pulse_1s);                    //且led2黄闪
-			//蜂鸣器闪烁报警
-			if(GPIO_ReadInputDataBit(GPIOB,GPIO_Pin_8))
-				Alarm_On();
-			else
-				Alarm_Off();
-
-			GPIO_SetBits(GPIOD, GPIO_Pin_2);
+			TT1_A6_0C=0;
+			GPIO_PinReverse(GPIOD, GPIO_Pin_1);    //黄闪故障灯
+			GPIO_PinReverse(GPIOE, GPIO_Pin_3);   //黄闪开蜂鸣器
+			normal_flicker(0) ;    //关闭正常LED闪烁
+			Yellow_count++;
+			if(Yellow_count>100)  //2*60=1分钟   重启设备
+			{
+				TT_cont3++;
+				tsk_lock ();
+				msg_error = _calloc_box (mpool);
+				msg_error->id = CAN_ID_NO;
+				msg_error->data[0] = IPI;
+				msg_error->data[1] = 0xA7;
+				msg_error->data[3] = 0xFF;
+				msg_error->data[5] = 0x01;
+				msg_error->data[7] = MSG_END;
+				msg_error->len = sizeof(msg_error->data);
+				msg_error->ch = 2;
+				msg_error->format = STANDARD_FORMAT;
+				msg_error->type = DATA_FRAME;
+				tsk_unlock ();
+				os_mbx_send (CAN_send_mailbox, msg_error, 0xffff);
+				Yellow_count=0;
+			}
 		}
-			
 	}
 }
 /*******************************************************************************
@@ -211,37 +249,72 @@ __task void task_green_led_flash(void)
 __task void task_hard_dog_flash(void)
 {
 	U8 id=0,i;U16 id_wtdg = 0;
-	U16 count_cpu = 0;
-	U16 OPEN_OK = 0;  //上电开机设定时间后检测
-
 	CAN_msg *msg_error;
 
-start:
 	while (1)
 	{
+		Yellow_Flash = 1;
 		// yellow flash for boot-up
-		msg_error = _calloc_box (mpool);
-		msg_error->id = 1;
-		msg_error->data[0] = IPI;
-		msg_error->data[1] = 0xA6;
-		msg_error->data[6] = 0x07;
-		msg_error->data[7] = MSG_END;
-		msg_error->len = sizeof(msg_error->data);
-		msg_error->ch = 2;
-		msg_error->format = STANDARD_FORMAT;
-		msg_error->type = DATA_FRAME;		
-		os_mbx_send (CAN_send_mailbox, msg_error, 0xffff);
-
-		os_dly_wait(1000); // yellow flash for 10s when booting up
-		heart_to_dog = 0;
-		os_dly_wait(100); // wait for 1s for all phase board heart beats
-		if (heart_to_dog == watchdog_count)
-			break;
+		while (1)
+		{
+			if(heart_to_dog&&0x01==1)
+			{
+				os_dly_wait(600);
+				tsk_lock ();
+				msg_error = _calloc_box (mpool);
+				msg_error->id = CAN_ID_NO;
+				msg_error->data[0] = IPI;
+				msg_error->data[1] = 0xA6;
+				msg_error->data[6] = 0x0B;   //黄闪板启动引起的黄闪
+				msg_error->data[7] = MSG_END;
+				msg_error->len = sizeof(msg_error->data);
+				msg_error->ch = 2;
+				msg_error->format = STANDARD_FORMAT;
+				msg_error->type = DATA_FRAME;
+				tsk_unlock ();
+				os_mbx_send (CAN_send_mailbox, msg_error, 0xffff);
+				break;
+			}
+		}
+//		while(1)
+//		{
+//			if(heart_to_dog == watchdog_count)
+//			{
+//				tsk_lock ();
+//				msg_error = _calloc_box (mpool);
+//				msg_error->id = CAN_ID_NO;
+//				msg_error->data[0] = IPI;
+//				msg_error->data[1] = 0xA7;
+//				msg_error->data[3] = 0xFF;
+//				msg_error->data[5] = 0x01;
+//				msg_error->data[7] = MSG_END;
+//				msg_error->len = sizeof(msg_error->data);
+//				msg_error->ch = 2;
+//				msg_error->format = STANDARD_FORMAT;
+//				msg_error->type = DATA_FRAME;
+//				tsk_unlock ();
+//				os_mbx_send (CAN_send_mailbox, msg_error, 0xffff);  //重启设备
+//				heart_to_dog = 0;
+//				break;
+//			}
+//		}
+		while(1)
+		{
+			if(heart_to_dog == watchdog_count)
+			{
+				heart_to_dog = 0;
+				Yellow_Flash = 0;
+				break;
+			}
+		}
+		break;
 	}
 
 	// stop yellow flash and tell every board
+	os_dly_wait(200);
+	tsk_lock ();
 	msg_error = _calloc_box (mpool);
-	msg_error->id = 1;
+	msg_error->id = CAN_ID_NO;
 	msg_error->data[0] = IPI;
 	msg_error->data[1] = 0xA6;
 	msg_error->data[6] = 0x0A;
@@ -249,36 +322,30 @@ start:
 	msg_error->len = sizeof(msg_error->data);
 	msg_error->ch = 2;
 	msg_error->format = STANDARD_FORMAT;
-	msg_error->type = DATA_FRAME;		
+	msg_error->type = DATA_FRAME;
+	tsk_unlock ();
 	os_mbx_send (CAN_send_mailbox, msg_error, 0xffff);
 	Yellow_Flash = 0;
-	Work_normal = 1;
 
-	os_itv_set (100);//1s
+	os_itv_set (100);//1000ms
 	while (1)
 	{
 		os_itv_wait ();
-		count_cpu++;
-		if(count_cpu == 400 ) count_cpu = 0;
-
-		if((count_cpu%100)==0 )     //1s内心跳小于节点数目,，则报警		
+		if((heart_to_dog != watchdog_count) &&(Yellow_Flash==0))   //所有板子心跳包没有在规定时间内到达
 		{
-			if(heart_to_dog != watchdog_count)    //所有板子心跳包没有在规定时间内到达
-			{
-				Work_normal=0;				
-				id_wtdg = ((U16)(~heart_to_dog))& watchdog_count;
-				for(i=0;i<16;i++)
-				{
-					if(((id_wtdg>>i) &1 )== 1)
-					{
-						id=i;break;
-					}
-				}
+			Yellow_Flash=1;
 
+			id_wtdg = ((U16)(~heart_to_dog))& watchdog_count;
+			for(i=0;i<16;i++)
+			{
+				if(((id_wtdg>>i) &1 )== 1)
+				{
+					id=i;break;
+				}
+			}
+				tsk_lock ();
 				msg_error = _calloc_box (mpool);
-				//						Line_num  ID_Num	  bad_light_num	  error_type
-				//{ 1, {IPI, 0xD2, 0x00, 0x01,    0xFF,        0xFF,         0xFF,     0xFE}, 8, 2, STANDARD_FORMAT, DATA_FRAME};			
-				msg_error->id = 1;
+				msg_error->id = CAN_ID_NO;
 				msg_error->data[0] = IPI;
 				msg_error->data[1] = 0xA6;
 				msg_error->data[3] = id;
@@ -287,20 +354,17 @@ start:
 				msg_error->len = sizeof(msg_error->data);
 				msg_error->ch = 2;
 				msg_error->format = STANDARD_FORMAT;
-				msg_error->type = DATA_FRAME;		
+				msg_error->type = DATA_FRAME;
+				tsk_unlock ();
 				os_mbx_send (CAN_send_mailbox, msg_error, 0xffff);
 				Yellow_Flash = 1;
-
 				heart_to_dog = 0;
-				goto start;
-			}
-			else if (Yellow_Flash == 1)
-			{
-				heart_to_dog = 0;
-				goto start;
-			}
-
-		 	heart_to_dog = 0;                                       //同步标记初始化
+        TT_cont2++;
+		}
+		else if (heart_to_dog == watchdog_count)
+		{
+			Yellow_Flash = 0;
+			heart_to_dog = 0;                                       //同步标记初始化
 		}
 	}
 }
@@ -318,21 +382,39 @@ void feed_yf_dog(void)
 	os_dly_wait(1);
 	Feed_Dog_High();
 }
-
 __task void task_yellow_flash(void)
 {
 	os_itv_set (1);
+	u8 cpu_dog_cnt = 0;
+	u8 yf_dog_cnt = 0;
 
 	while (1)
 	{
 		os_itv_wait ();
 
+		cpu_dog_cnt++;
+		yf_dog_cnt++;
+
 		// feed cpu dog
-		feed_cpu_dog();
+		if (cpu_dog_cnt % 2 == 0)
+		{
+			Feed_RESET_Dog_High();
+		}
+		ele if (cpu_dog_cnt % 2 == 1)
+		{
+			Feed_RESET_Dog_Low();
+		}
 
 		if (!Yellow_Flash)
 		{
-			feed_yf_dog();
+			if (yf_dog_cnt % 2 == 0)
+			{
+				Feed_Dog_Low();
+			}
+			else if (yf_dog_cnt % 2 == 1)
+			{
+				Feed_Dog_High();
+			}
 		}
 	}
 }

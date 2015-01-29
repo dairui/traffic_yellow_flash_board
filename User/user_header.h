@@ -52,3 +52,5 @@
 
 #define ADC_CHANNEL			4
 #define ADC_EXCHANGE_COUNT			3
+
+#define CAN_ID_NO  5

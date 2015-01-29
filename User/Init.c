@@ -176,7 +176,7 @@ void CAN_Configuration(void)
     CAN_InitStructure.CAN_AWUM = ENABLE;    //自动唤醒模式
     CAN_InitStructure.CAN_NART = DISABLE;   //禁止自动重传模式
     CAN_InitStructure.CAN_RFLM = ENABLE;    //接收FIFO锁定模式
-    CAN_InitStructure.CAN_TXFP = ENABLE;    //发送FIFO优先级  
+    CAN_InitStructure.CAN_TXFP = DISABLE;    //发送FIFO优先级
     CAN_InitStructure.CAN_Mode = CAN_Mode_Normal;     	//CAN工作模式
     CAN_InitStructure.CAN_SJW = CAN_SJW_1tq;            //重新同步跳跃宽度1个时间单位
     CAN_InitStructure.CAN_BS1 = CAN_BS1_9tq;            //时间段1为8个时间单位
